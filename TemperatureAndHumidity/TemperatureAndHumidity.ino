@@ -7,19 +7,57 @@
 
 #define DHTTYPE DHT11   // DHT 11
 
-// WiFi parameters
-const char* ssid = "Hysonix";
-const char* password = "champster";
+bool isConfigured = false;
+String ssid = "";
+String password = "";
+String state = "WAITING";
 
 String subId;
 
+unsigned long previousMillis = 0; // last time update
+long interval = 2000; // interval at which to do something (milliseconds)
+
 ESP8266WebServer server(80);
 
-// DHT Sensor
 const int DHTPin = 5;
 
 // Initialize DHT sensor.
 DHT dht(DHTPin, DHTTYPE, 11);
+
+void startWebserver(){
+  // Connect to WiFi
+  char __ssid[sizeof(ssid)];
+  ssid.toCharArray(__ssid, sizeof(__ssid));
+  char __password[sizeof(password)];
+  password.toCharArray(__password, sizeof(__password));
+  
+  WiFi.begin(__ssid, __password);  
+  
+  Serial.println("Attempting connection");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.println(".");
+  }
+  
+  Serial.println("");
+  Serial.println(subId);
+  Serial.println("WiFi connected");
+  
+  // Print the IP address
+  Serial.println(WiFi.localIP());
+
+  server.on("/", handleRootPath);  //Associate the handler function to the path
+
+  server.on("/concordia/join", handleJoinConcordia);
+  
+  server.begin(); //Start the server
+  
+  Serial.println("Server listening");
+}
+
+void startSensor() {  
+  dht.begin();
+}
 
 void handleRootPath() {       
   String html = "<form action=\"/concordia/join\" method=\"get\"><input type=\"text\" name=\"subid\" placeholder=\"SUBSCRIPTION ID\"><br><input type=\"submit\" value=\"Submit\"></form>";  
@@ -46,42 +84,82 @@ void setup(void)
   
   EEPROM.begin(512);
 
-  delay(10);
+  int(10);
+
+  Serial.println("Reading from EEPROM");
+  String configCheck = "";
+  for (int i = 0; i < 9; ++i)
+  {
+    configCheck += char(EEPROM.read(i));
+  }
   
-  for (int i = 0; i < 36; ++i)
+  if(configCheck == "concordia") {
+    isConfigured = true;
+  }
+  Serial.println("configCheck: ");
+  Serial.println(configCheck);
+  Serial.println(isConfigured);
+
+  for (int i = 9; i < 45; ++i)
+  {
+    ssid += char(EEPROM.read(i));
+  }
+  
+  for (int i = 45; i < 81; ++i)
+  {
+    password += char(EEPROM.read(i));
+  }
+  
+  for (int i = 81; i < 117; ++i)
   {
     subId += char(EEPROM.read(i));
   }
+
   
-  dht.begin();
-  
-  // Connect to WiFi
-  WiFi.begin(ssid, password);
-  
-  Serial.println("Attempting connection");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.println(".");
-  }
-  
-  Serial.println("");
+  Serial.println("ssid: ");
+  Serial.println(ssid);
+  Serial.println("password: ");
+  Serial.println(password);
+  Serial.println("subId: ");
   Serial.println(subId);
-  Serial.println("WiFi connected");
-  
-  // Print the IP address
-  Serial.println(WiFi.localIP());
 
-  server.on("/", handleRootPath);  //Associate the handler function to the path
-
-  server.on("/concordia/join", handleJoinConcordia);
-  
-  server.begin(); //Start the server
-  
-  Serial.println("Server listening");
+  Serial.println(state);
+  if(isConfigured) {
+    startWebserver();
+    startSensor();
+  }  
 }
 
 void loop() {
-  server.handleClient(); //Handling of incoming requests
+  while(Serial.available()) {
+    String data = Serial.readString();// read the incoming data as string    
+    Serial.println(data); 
+
+    ssid = data.substring(0,32);
+    password = data.substring(32, 64);
+    subId = data.substring(64, 100);
+    
+    state = "CONNECTED";
+    Serial.println(state);
+    Serial.print("ssid: ");
+    Serial.println(ssid);
+    Serial.print("password: ");
+    Serial.println(password);
+    Serial.print("subId: ");
+    Serial.println(subId);
+  }
+  if (state == "WAITING") {
+    unsigned long currentMillis = millis();
+
+    if(currentMillis - previousMillis > interval) {
+      previousMillis = currentMillis;  
+  
+      Serial.println("WAITING");
+    }
+  }
+  else if (state == "CONNECTED"){
+    server.handleClient(); //Handling of incoming requests    
+  }
 }
 
 
