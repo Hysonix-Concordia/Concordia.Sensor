@@ -9,7 +9,6 @@
 String state = "WAITING";
 String ssid = "";
 String password = "";
-String subId = "";
 
 unsigned long previousMillis = 0; // last time update
 long interval = 2000; // interval at which to do something (milliseconds)
@@ -20,6 +19,8 @@ const int DHTPin = 5;
 DHT dht(DHTPin, DHTTYPE, 11);
 
 void startWebserver(){
+  Serial.println(ssid);
+  Serial.println(password);
   // Connect to WiFi  
   char __ssid[sizeof(ssid)];
   ssid.toCharArray(__ssid, sizeof(__ssid));
@@ -45,7 +46,7 @@ void startWebserver(){
   server.begin();
   
   Serial.println("Server listening");
-  state = "CONNECTED";
+  state = "READY";
 }
 
 void startSensor() {  
@@ -53,21 +54,14 @@ void startSensor() {
 }
 
 void handleRootPath() {       
-  String html = "<form action=\"/concordia/join\" method=\"get\"><input type=\"text\" name=\"subid\" placeholder=\"SUBSCRIPTION ID\"><br><input type=\"submit\" value=\"Submit\"></form>";  
+  String html = "<form action=\"/concordia/join\" method=\"get\"><input type=\"text\" name=\"devicename\" placeholder=\"DEVICE NAME\"><br><input type=\"text\" name=\"subid\" placeholder=\"SUBSCRIPTION ID\"><br><input type=\"submit\" value=\"Submit\"></form>";  
   server.send(200, "text/html", html);
 }
 
 void handleJoinConcordia(){
-  subId = server.arg("subid");
-  Serial.println(subId);
-  for (int i = 0; i < subId.length(); ++i)
-  {
-    EEPROM.write(i, subId[i]);
-    Serial.print("Wrote: ");
-    Serial.println(subId[i]); 
-  }
+  String deviceName = server.arg("devicename");
+  String subId = server.arg("subid");
   
-  EEPROM.commit();
   server.send(200, "text/html", "<div style=\"font-size: 18pt\">Subscription successful</div>");
 }
 
@@ -83,9 +77,6 @@ bool readConfiguration(){
   if(configCheck == "concordia") {
     isConfigured = true;
   }
-  Serial.println("configCheck: ");
-  Serial.println(configCheck);
-  Serial.println(isConfigured);
 
   ssid = "";
   for (int i = 10; i < 47; ++i)
@@ -104,15 +95,6 @@ bool readConfiguration(){
   password.replace(" ", "");
   password.trim();
   password.remove(password.length() - 1);
-
-  subId = "";
-  for (int i = 87; i < 124; ++i)
-  {
-    subId += char(EEPROM.read(i));
-  }
-  subId.replace(" ", "");
-  subId.trim();
-  subId.remove(subId.length() - 1);
   
   return isConfigured;
 }
@@ -131,11 +113,10 @@ boolean eeprom_write_string(int addr, char* string) {
   return eeprom_write_bytes(addr, (const byte*)string, numBytes);
 }
 
-void saveConfiguration(String newSSID, String newPassword, String newSubId) {  
+void saveConfiguration(String newSSID, String newPassword) {  
   eeprom_write_string(0, "concordia");
   eeprom_write_string(10, (char *)newSSID.c_str());
   eeprom_write_string(47, (char *)newPassword.c_str());
-  eeprom_write_string(87, (char *)newSubId.c_str());
   EEPROM.commit();  
 }
 
@@ -153,15 +134,20 @@ void setup(void)
   EEPROM.commit();
 
   bool isConfigured = readConfiguration();
-  
-  Serial.println("ssid: ");
-  Serial.println(ssid);
-  Serial.println("password: ");
-  Serial.println(password);
-  Serial.println("subId: ");
-  Serial.println(subId);
 
-  Serial.println(state);
+  if(isConfigured) {
+    startWebserver();
+    startSensor();
+  }  
+}
+
+void saveConfiguration(String data) {
+  String newSSID = data.substring(0,32);
+  String newPassword = data.substring(32, 64);
+  saveConfiguration(newSSID, newPassword);
+  delay(200);
+  bool isConfigured = readConfiguration();
+
   if(isConfigured) {
     startWebserver();
     startSensor();
@@ -177,39 +163,27 @@ void loop() {
     configChanged = true;
   }
 
-  if (configChanged && data.length() == 100) {
-    String newSSID = data.substring(0,32);
-    String newPassword = data.substring(32, 64);
-    String newSubId = data.substring(64, 100);
-
-    saveConfiguration(newSSID, newPassword, newSubId);
-    delay(200);
-    bool isConfigured = readConfiguration();
-  
-    Serial.println("ssid: ");
-    Serial.println(ssid);
-    Serial.println("password: ");
-    Serial.println(password);
-    Serial.println("subId: ");
-    Serial.println(subId);
-  
-    Serial.println(state);
-    if(isConfigured) {
-      startWebserver();
-      startSensor();
-    }  
+  if (configChanged && data.length() == 64) {
+    saveConfiguration(data);
   }  
   
+  unsigned long currentMillis = millis();
   if (state == "WAITING") {
-    unsigned long currentMillis = millis();
-
     if(currentMillis - previousMillis > interval) {
       previousMillis = currentMillis;  
   
       Serial.println("WAITING");
     }
   }
-  else if (state == "CONNECTED"){
+  else if (state == "READY" || state == "CONNECTED"){
+    if (state == "READY") {
+      if(currentMillis - previousMillis > interval) {
+        previousMillis = currentMillis; 
+      
+        Serial.print("READY:");       
+        Serial.println(WiFi.localIP()); 
+      }     
+    }
     server.handleClient(); //Handling of incoming requests    
   }
 }
