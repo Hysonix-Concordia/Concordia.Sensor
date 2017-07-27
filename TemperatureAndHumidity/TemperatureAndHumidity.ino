@@ -9,14 +9,19 @@
 String state = "WAITING";
 String ssid = "";
 String password = "";
+String deviceId = "";
+String host = "http://concordia.hysonix.com";
 
 unsigned long previousMillis = 0; // last time update
 long interval = 2000; // interval at which to do something (milliseconds)
+long sensorinterval = 900000; 
 
 ESP8266WebServer server(80);
 
 const int DHTPin = 5;
 DHT dht(DHTPin, DHTTYPE, 11);
+float temperature = 0;
+float humidity = 0;
 
 void startWebserver(){
   Serial.println(ssid);
@@ -42,6 +47,7 @@ void startWebserver(){
 
   server.on("/", handleRootPath); 
   server.on("/concordia/join", handleJoinConcordia);
+  server.on("/concordia/sensor/data", handleReadSensor);
   
   server.begin();
   
@@ -61,8 +67,49 @@ void handleRootPath() {
 void handleJoinConcordia(){
   String deviceName = server.arg("devicename");
   String subId = server.arg("subid");
+  String uri = "/device/register";
   
-  server.send(200, "text/html", "<div style=\"font-size: 18pt\">Subscription successful</div>");
+  HTTPClient http;    //Declare object of class HTTPClient
+ 
+  http.begin(host + uri);      //Specify request destination
+  http.addHeader("Content-Type", "application/json");  //Specify content-type header
+
+  String json = "{\"SubscriptionId\": \"" + subId + "\", \"DeviceName\": \"" + deviceName + "\"}";
+  Serial.println(json);
+  int httpCode = http.POST(json);
+  String payload = http.getString();
+  
+  Serial.println(httpCode);   //Print HTTP return code
+  Serial.println(payload);    //Print request response payload
+  
+  bool success = payload.substring(0, 10) == "SUCCESSFUL";
+  String html = "";
+  if(success) {
+    deviceId = payload.substring(11);
+    Serial.println(deviceId); 
+    eeprom_write_string(87, (char *)deviceId.c_str());
+    EEPROM.commit();  
+    html = "<div style=\"font-size: 18pt\">Device registration successful</div>";
+  }
+  else {
+    html = payload;
+  }  
+  
+  http.end();  //Close connection
+
+  startSensor();
+  state = "CONNECTED";
+  
+  server.send(200, "text/html", html);
+}
+
+void handleReadSensor(){  
+  char strHumidity[6];
+  char strTemperature[6];
+  dtostrf(humidity,5,2,strHumidity);
+  dtostrf(temperature,5,2,strTemperature);  
+  String html = String("<div style=\"font-size: 18pt\">Temperature: ") + strTemperature + String("</div><div style=\"font-size: 18pt\">Humidity: ") + strHumidity + String("</div>");
+  server.send(200, "text/html", html);
 }
 
 bool readConfiguration(){
@@ -95,6 +142,16 @@ bool readConfiguration(){
   password.replace(" ", "");
   password.trim();
   password.remove(password.length() - 1);
+
+  deviceId = "";
+  for (int i = 87; i < 125; ++i)
+  {
+    deviceId += char(EEPROM.read(i));
+  }
+  deviceId.replace(" ", "");
+  deviceId.trim();
+  deviceId.remove(deviceId.length() - 1);
+  Serial.println(deviceId); 
   
   return isConfigured;
 }
@@ -126,12 +183,12 @@ void setup(void)
   
   EEPROM.begin(512);
 
-  /*Use to clear EEPROM*/
+  /*Use to clear EEPROM
   for (int i = 0; i < 9; ++i)
   {
     EEPROM.write(i, 0);
   }
-  EEPROM.commit();
+  EEPROM.commit();*/
 
   bool isConfigured = readConfiguration();
 
@@ -150,7 +207,6 @@ void saveConfiguration(String data) {
 
   if(isConfigured) {
     startWebserver();
-    startSensor();
   }  
 }
 
@@ -184,26 +240,33 @@ void loop() {
         Serial.println(WiFi.localIP()); 
       }     
     }
+    else {
+      if(currentMillis - previousMillis > sensorinterval) {
+        previousMillis = currentMillis; 
+        
+        humidity = dht.readHumidity();
+        temperature = dht.readTemperature(true);
+        if (isnan(humidity) || isnan(temperature)) {
+          Serial.println("Failed to read from DHT sensor!");     
+        }
+        else{
+          //Post to concordia
+          /*String uri = "/device/register";
+          
+          HTTPClient http;    //Declare object of class HTTPClient
+         
+          http.begin(host + uri);      //Specify request destination
+          http.addHeader("Content-Type", "application/json");  //Specify content-type header
+        
+          String json = "{\"SubscriptionId\": \"" + subId + "\", \"DeviceId\": \"" + deviceId + "\", \"Temperature\": \"" + temperature + "\", \"Humidity\": \"" + humidity + "\"}";
+          Serial.println(json);
+          int httpCode = http.POST(json);
+          String payload = http.getString();*/
+        }
+        
+      } 
+     
+    }
     server.handleClient(); //Handling of incoming requests    
   }
-}
-
-
-void sendData() {
-  
-  String host = "http://concordia.hysonix.com";
-  String uri = "/sensor-data";
-  
-  HTTPClient http;    //Declare object of class HTTPClient
- 
-  http.begin(host + uri);      //Specify request destination
-  http.addHeader("Content-Type", "text/json");  //Specify content-type header
-  
-  int httpCode = http.POST("{\"SubscriptionId\": \"" + subId + "\"}");   //Send the request
-  String payload = http.getString();                  //Get the response payload
-  
-  Serial.println(httpCode);   //Print HTTP return code
-  Serial.println(payload);    //Print request response payload
-  
-  http.end();  //Close connection
 }
